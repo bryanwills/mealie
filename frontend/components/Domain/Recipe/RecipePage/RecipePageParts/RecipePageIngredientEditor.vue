@@ -5,9 +5,11 @@
       v-if="recipe.recipeIngredient.length > 0"
       v-model="recipe.recipeIngredient"
       handle=".handle"
+      delay="250"
+      :delay-on-touch-only="true"
       v-bind="{
         animation: 200,
-        group: 'description',
+        group: 'recipe-ingredients',
         disabled: false,
         ghostClass: 'ghost',
       }"
@@ -22,6 +24,8 @@
           class="list-group-item"
           :disable-amount="recipe.settings.disableAmount"
           @delete="recipe.recipeIngredient.splice(index, 1)"
+          @insert-above="insertNewIngredient(index)"
+          @insert-below="insertNewIngredient(index+1)"
         />
       </TransitionGroup>
     </draggable>
@@ -140,6 +144,20 @@ export default defineComponent({
       }
     }
 
+    function insertNewIngredient(dest: number) {
+      props.recipe.recipeIngredient.splice(dest, 0, {
+            referenceId: uuid4(),
+            title: "",
+            note: "",
+            // @ts-expect-error - prop can be null-type by NoUndefinedField type forces it to be set
+            unit: undefined,
+            // @ts-expect-error - prop can be null-type by NoUndefinedField type forces it to be set
+            food: undefined,
+            disableAmount: true,
+            quantity: 1,
+          });
+    }
+
     return {
       user,
       groupSlug,
@@ -148,6 +166,7 @@ export default defineComponent({
       hasFoodOrUnit,
       imageKey,
       drag,
+      insertNewIngredient,
     };
   },
 });

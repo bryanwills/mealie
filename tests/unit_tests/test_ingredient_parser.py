@@ -1,12 +1,17 @@
+import asyncio
+import json
 import shutil
 from dataclasses import dataclass
 from fractions import Fraction
 
 import pytest
 from pydantic import UUID4
+from sqlalchemy.orm import Session
 
 from mealie.db.db_setup import session_context
+from mealie.repos.all_repositories import get_repositories
 from mealie.repos.repository_factory import AllRepositories
+from mealie.schema.openai.recipe_ingredient import OpenAIIngredient, OpenAIIngredients
 from mealie.schema.recipe.recipe_ingredient import (
     CreateIngredientFood,
     CreateIngredientFoodAlias,
@@ -20,10 +25,13 @@ from mealie.schema.recipe.recipe_ingredient import (
     SaveIngredientUnit,
 )
 from mealie.schema.user.user import GroupBase
+from mealie.services.openai import OpenAIService
 from mealie.services.parser_services import RegisteredParser, get_parser
-from mealie.services.parser_services.crfpp.processor import CRFIngredient, convert_list_to_crf_model
+from mealie.services.parser_services.crfpp.processor import (
+    CRFIngredient,
+    convert_list_to_crf_model,
+)
 from tests.utils.factories import random_int, random_string
-from tests.utils.fixture_schemas import TestUser
 
 
 @dataclass
@@ -50,15 +58,20 @@ def build_parsed_ing(food: str | None, unit: str | None) -> ParsedIngredient:
 
 
 @pytest.fixture()
-def unique_local_group_id(database: AllRepositories) -> UUID4:
-    return str(database.groups.create(GroupBase(name=random_string())).id)
+def unique_local_group_id(unfiltered_database: AllRepositories) -> UUID4:
+    return str(unfiltered_database.groups.create(GroupBase(name=random_string())).id)
+
+
+@pytest.fixture()
+def unique_db(session: Session, unique_local_group_id: str):
+    return get_repositories(session, group_id=unique_local_group_id)
 
 
 @pytest.fixture()
 def parsed_ingredient_data(
-    database: AllRepositories, unique_local_group_id: UUID4
+    unique_db: AllRepositories, unique_local_group_id: UUID4
 ) -> tuple[list[IngredientFood], list[IngredientUnit]]:
-    foods = database.ingredient_foods.create_many(
+    foods = unique_db.ingredient_foods.create_many(
         [
             SaveIngredientFood(name="potatoes", group_id=unique_local_group_id),
             SaveIngredientFood(name="onion", group_id=unique_local_group_id),
@@ -79,7 +92,7 @@ def parsed_ingredient_data(
     )
 
     foods.extend(
-        database.ingredient_foods.create_many(
+        unique_db.ingredient_foods.create_many(
             [
                 SaveIngredientFood(name=f"{random_string()} food", group_id=unique_local_group_id)
                 for _ in range(random_int(10, 15))
@@ -87,7 +100,7 @@ def parsed_ingredient_data(
         )
     )
 
-    units = database.ingredient_units.create_many(
+    units = unique_db.ingredient_units.create_many(
         [
             SaveIngredientUnit(name="Cups", group_id=unique_local_group_id),
             SaveIngredientUnit(name="Tablespoon", group_id=unique_local_group_id),
@@ -110,7 +123,7 @@ def parsed_ingredient_data(
     )
 
     units.extend(
-        database.ingredient_foods.create_many(
+        unique_db.ingredient_foods.create_many(
             [
                 SaveIngredientUnit(name=f"{random_string()} unit", group_id=unique_local_group_id)
                 for _ in range(random_int(10, 15))
@@ -139,7 +152,7 @@ def test_nlp_parser() -> None:
     models: list[CRFIngredient] = convert_list_to_crf_model([x.input for x in test_ingredients])
 
     # Iterate over models and test_ingredients to gather
-    for model, test_ingredient in zip(models, test_ingredients):
+    for model, test_ingredient in zip(models, test_ingredients, strict=False):
         assert round(float(sum(Fraction(s) for s in model.qty.split())), 3) == pytest.approx(test_ingredient.quantity)
 
         assert model.comment == test_ingredient.comments
@@ -223,8 +236,9 @@ def test_brute_parser(
     comment: str,
 ):
     with session_context() as session:
+        loop = asyncio.get_event_loop()
         parser = get_parser(RegisteredParser.brute, unique_local_group_id, session)
-        parsed = parser.parse_one(input)
+        parsed = loop.run_until_complete(parser.parse_one(input))
         ing = parsed.ingredient
 
         if ing.quantity:
@@ -430,3 +444,43 @@ def test_parser_ingredient_match(
             assert parsed_ingredient.ingredient.unit is None or isinstance(
                 parsed_ingredient.ingredient.unit, CreateIngredientUnit
             )
+
+
+def test_openai_parser(
+    unique_local_group_id: UUID4,
+    parsed_ingredient_data: tuple[list[IngredientFood], list[IngredientUnit]],  # required so database is populated
+    monkeypatch: pytest.MonkeyPatch,
+):
+    ingredient_count = random_int(10, 20)
+
+    async def mock_get_response(self, prompt: str, message: str, *args, **kwargs) -> str | None:
+        inputs = json.loads(message)
+        data = OpenAIIngredients(
+            ingredients=[
+                OpenAIIngredient(
+                    input=input,
+                    confidence=1,
+                    quantity=random_int(0, 10),
+                    unit=random_string(),
+                    food=random_string(),
+                    note=random_string(),
+                )
+                for input in inputs
+            ]
+        )
+        return data.model_dump_json()
+
+    monkeypatch.setattr(OpenAIService, "get_response", mock_get_response)
+
+    with session_context() as session:
+        loop = asyncio.get_event_loop()
+        parser = get_parser(RegisteredParser.openai, unique_local_group_id, session)
+
+        inputs = [random_string() for _ in range(ingredient_count)]
+        parsed = loop.run_until_complete(parser.parse(inputs))
+
+        # since OpenAI is mocked, we don't need to validate the data, we just need to make sure parsing works
+        # and that it preserves order
+        assert len(parsed) == ingredient_count
+        for input, output in zip(inputs, parsed, strict=True):
+            assert output.input == input

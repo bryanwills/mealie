@@ -4,6 +4,7 @@ from mealie.schema._mealie import MealieModel
 class AppStatistics(MealieModel):
     total_recipes: int
     total_users: int
+    total_households: int
     total_groups: int
     uncategorized_recipes: int
     untagged_recipes: int
@@ -15,9 +16,12 @@ class AppInfo(MealieModel):
     demo_status: bool
     allow_signup: bool
     default_group_slug: str | None = None
+    default_household_slug: str | None = None
     enable_oidc: bool
     oidc_redirect: bool
     oidc_provider_name: str
+    enable_openai: bool
+    enable_openai_image_services: bool
 
 
 class AppTheme(MealieModel):
@@ -56,6 +60,7 @@ class AdminAboutInfo(AppInfo):
     db_type: str
     db_url: str | None = None
     default_group: str
+    default_household: str
     build_id: str
     recipe_scraper_version: str
 
@@ -64,10 +69,6 @@ class CheckAppConfig(MealieModel):
     email_ready: bool
     ldap_ready: bool
     oidc_ready: bool
+    enable_openai: bool
     base_url_set: bool
     is_up_to_date: bool
-
-
-class OIDCInfo(MealieModel):
-    configuration_url: str | None
-    client_id: str | None

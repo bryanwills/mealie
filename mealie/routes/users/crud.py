@@ -11,7 +11,7 @@ from mealie.routes.users._helpers import assert_user_change_allowed
 from mealie.schema.response import ErrorResponse, SuccessResponse
 from mealie.schema.response.pagination import PaginationQuery
 from mealie.schema.user import ChangePassword, UserBase, UserIn, UserOut
-from mealie.schema.user.user import GroupInDB, UserPagination
+from mealie.schema.user.user import UserPagination, UserRatings, UserRatingSummary
 
 user_router = UserAPIRouter(prefix="/users", tags=["Users: CRUD"])
 admin_router = AdminAPIRouter(prefix="/users", tags=["Users: Admin CRUD"])
@@ -25,6 +25,8 @@ class AdminUserController(BaseAdminController):
 
     @admin_router.get("", response_model=UserPagination)
     def get_all(self, q: PaginationQuery = Depends(PaginationQuery)):
+        """Returns all users from all groups"""
+
         response = self.repos.users.page_all(
             pagination=q,
             override=UserOut,
@@ -44,13 +46,6 @@ class AdminUserController(BaseAdminController):
 
     @admin_router.delete("/{item_id}")
     def delete_user(self, item_id: UUID4):
-        """Removes a user from the database. Must be the current user or a super user"""
-
-        assert_user_change_allowed(item_id, self.user)
-
-        if item_id == 1:  # TODO: identify super_user
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="SUPER_USER")
-
         self.mixins.delete_one(item_id)
 
 
@@ -60,9 +55,24 @@ class UserController(BaseUserController):
     def get_logged_in_user(self):
         return self.user
 
-    @user_router.get("/self/group", response_model=GroupInDB)
-    def get_logged_in_user_group(self):
-        return self.group
+    @user_router.get("/self/ratings", response_model=UserRatings[UserRatingSummary])
+    def get_logged_in_user_ratings(self):
+        return UserRatings(ratings=self.repos.user_ratings.get_by_user(self.user.id))
+
+    @user_router.get("/self/ratings/{recipe_id}", response_model=UserRatingSummary)
+    def get_logged_in_user_rating_for_recipe(self, recipe_id: UUID4):
+        user_rating = self.repos.user_ratings.get_by_user_and_recipe(self.user.id, recipe_id)
+        if user_rating:
+            return user_rating
+        else:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                ErrorResponse.respond("User has not rated this recipe"),
+            )
+
+    @user_router.get("/self/favorites", response_model=UserRatings[UserRatingSummary])
+    def get_logged_in_user_favorites(self):
+        return UserRatings(ratings=self.repos.user_ratings.get_by_user(self.user.id, favorites_only=True))
 
     @user_router.put("/password")
     def update_password(self, password_change: ChangePassword):
@@ -89,19 +99,7 @@ class UserController(BaseUserController):
 
     @user_router.put("/{item_id}")
     def update_user(self, item_id: UUID4, new_data: UserBase):
-        assert_user_change_allowed(item_id, self.user)
-
-        if not self.user.admin and (new_data.admin or self.user.group != new_data.group):
-            # prevent a regular user from doing admin tasks on themself
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, ErrorResponse.respond("User doesn't have permission to change group")
-            )
-
-        if self.user.id == item_id and self.user.admin and not new_data.admin:
-            # prevent an admin from demoting themself
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, ErrorResponse.respond("User doesn't have permission to change group")
-            )
+        assert_user_change_allowed(item_id, self.user, new_data)
 
         try:
             self.repos.users.update(item_id, new_data.model_dump())

@@ -1,6 +1,9 @@
 import json
+from datetime import timedelta
 from pathlib import Path
+from typing import cast
 
+import isodate
 import yaml
 from PIL import UnidentifiedImageError
 from pydantic import UUID4
@@ -55,6 +58,21 @@ def split_by_comma(tag_string: str):
     if not isinstance(tag_string, str):
         return None
     return [x.title().lstrip() for x in tag_string.split(",") if x != ""]
+
+
+def split_by_semicolon(input: str):
+    """Splits a single string by ';', performs a line strip removes empty strings"""
+
+    if not isinstance(input, str):
+        return None
+    return [x.strip() for x in input.split(";") if x]
+
+
+def split_by_line_break(input: str):
+    """Splits a single string by line break, performs a line strip removes empty strings"""
+    if not isinstance(input, str):
+        return None
+    return [x.strip() for x in input.split("\n") if x]
 
 
 def glob_walker(directory: Path, glob_str: str, return_parent=True) -> list[Path]:  # TODO:
@@ -117,3 +135,45 @@ async def scrape_image(image_url: str, recipe_id: UUID4):
         await data_service.scrape_image(image_url)
     except UnidentifiedImageError:
         return
+
+
+def parse_iso8601_duration(time: str | None) -> str:
+    """
+    Parses an ISO8601 duration string
+
+    https://en.wikipedia.org/wiki/ISO_8601#Durations
+    """
+
+    if not time:
+        return ""
+    if time[0] == "P":
+        try:
+            delta = isodate.parse_duration(time)
+            if not isinstance(delta, timedelta):
+                return time
+        except isodate.ISO8601Error:
+            return time
+
+    # TODO: make singular and plural translatable
+    time_part_map = {
+        "days": {"singular": "day", "plural": "days"},
+        "hours": {"singular": "hour", "plural": "hours"},
+        "minutes": {"singular": "minute", "plural": "minutes"},
+        "seconds": {"singular": "second", "plural": "seconds"},
+    }
+
+    delta = cast(timedelta, delta)
+    time_part_map["days"]["value"] = delta.days
+    time_part_map["hours"]["value"] = delta.seconds // 3600
+    time_part_map["minutes"]["value"] = (delta.seconds // 60) % 60
+    time_part_map["seconds"]["value"] = delta.seconds % 60
+
+    return_strings: list[str] = []
+    for value_map in time_part_map.values():
+        if not (value := value_map["value"]):
+            continue
+
+        unit_key = "singular" if value == 1 else "plural"
+        return_strings.append(f"{value} {value_map[unit_key]}")
+
+    return " ".join(return_strings) if return_strings else time

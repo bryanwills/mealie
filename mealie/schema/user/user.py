@@ -1,25 +1,26 @@
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Generic, TypeVar
 from uuid import UUID
 
-from pydantic import UUID4, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import UUID4, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.interfaces import LoaderOption
 
 from mealie.core.config import get_app_dirs, get_app_settings
+from mealie.db.models.recipe.recipe import RecipeModel
 from mealie.db.models.users import User
-from mealie.db.models.users.users import AuthMethod
+from mealie.db.models.users.user_to_recipe import UserToRecipe
+from mealie.db.models.users.users import AuthMethod, LongLiveToken
 from mealie.schema._mealie import MealieModel
 from mealie.schema.group.group_preferences import ReadGroupPreferences
-from mealie.schema.group.webhook import CreateWebhook, ReadWebhook
-from mealie.schema.recipe import RecipeSummary
+from mealie.schema.household.webhook import CreateWebhook, ReadWebhook
 from mealie.schema.response.pagination import PaginationBase
 
 from ...db.models.group import Group
-from ...db.models.recipe import RecipeModel
 from ..recipe import CategoryBase
 
+DataT = TypeVar("DataT", bound=BaseModel)
 DEFAULT_INTEGRATION_ID = "generic"
 settings = get_app_settings()
 
@@ -30,11 +31,20 @@ class LongLiveTokenIn(MealieModel):
 
 
 class LongLiveTokenOut(MealieModel):
-    token: str
     name: str
     id: int
     created_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
+
+    @classmethod
+    def loader_options(cls) -> list[LoaderOption]:
+        return [joinedload(LongLiveToken.user)]
+
+
+class LongLiveTokenCreateResponse(LongLiveTokenOut):
+    """Should ONLY be used when creating a new token, as the token field is sensitive"""
+
+    token: str
 
 
 class CreateToken(LongLiveTokenIn):
@@ -54,23 +64,62 @@ class ChangePassword(MealieModel):
 
 
 class GroupBase(MealieModel):
-    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]  # type: ignore
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     model_config = ConfigDict(from_attributes=True)
+
+
+class UserRatingSummary(MealieModel):
+    recipe_id: UUID4
+    rating: float | None = None
+    is_favorite: Annotated[bool, Field(validate_default=True)] = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+    @field_validator("is_favorite", mode="before")
+    def convert_is_favorite(cls, v: Any) -> bool:
+        if v is None:
+            return False
+        else:
+            return v
+
+
+class UserRatingCreate(UserRatingSummary):
+    user_id: UUID4
+
+
+class UserRatingUpdate(MealieModel):
+    rating: float | None = None
+    is_favorite: bool | None = None
+
+
+class UserRatingOut(UserRatingCreate):
+    id: UUID4
+
+    @classmethod
+    def loader_options(cls) -> list[LoaderOption]:
+        return [
+            joinedload(UserToRecipe.recipe).joinedload(RecipeModel.user).load_only(User.household_id, User.group_id)
+        ]
+
+
+class UserRatings(BaseModel, Generic[DataT]):
+    ratings: list[DataT]
 
 
 class UserBase(MealieModel):
     id: UUID4 | None = None
     username: str | None = None
     full_name: str | None = None
-    email: Annotated[str, StringConstraints(to_lower=True, strip_whitespace=True)]  # type: ignore
+    email: Annotated[str, StringConstraints(to_lower=True, strip_whitespace=True)]
     auth_method: AuthMethod = AuthMethod.MEALIE
     admin: bool = False
     group: str | None = None
+    household: str | None = None
     advanced: bool = False
-    favorite_recipes: list[str] | None = []
 
     can_invite: bool = False
     can_manage: bool = False
+    can_manage_household: bool = False
     can_organize: bool = False
     model_config = ConfigDict(
         from_attributes=True,
@@ -80,6 +129,7 @@ class UserBase(MealieModel):
                 "fullName": "Change Me",
                 "email": "changeme@example.com",
                 "group": settings.DEFAULT_GROUP,
+                "household": settings.DEFAULT_HOUSEHOLD,
                 "admin": "false",
             }
         },
@@ -95,8 +145,20 @@ class UserBase(MealieModel):
         except AttributeError:
             return v
 
+    @field_validator("household", mode="before")
+    def convert_household_to_name(cls, v):
+        if not v or isinstance(v, str):
+            return v
+
+        try:
+            return v.name
+        except AttributeError:
+            return v
+
 
 class UserIn(UserBase):
+    username: str
+    full_name: str
     password: str
 
 
@@ -105,9 +167,11 @@ class UserOut(UserBase):
     group: str
     group_id: UUID4
     group_slug: str
+    household: str
+    household_id: UUID4
+    household_slug: str
     tokens: list[LongLiveTokenOut] | None = None
     cache_key: str
-    favorite_recipes: Annotated[list[str], Field(validate_default=True)] = []
     model_config = ConfigDict(from_attributes=True)
 
     @property
@@ -116,50 +180,28 @@ class UserOut(UserBase):
 
     @classmethod
     def loader_options(cls) -> list[LoaderOption]:
-        return [joinedload(User.group), joinedload(User.favorite_recipes), joinedload(User.tokens)]
+        return [joinedload(User.group), joinedload(User.household), joinedload(User.tokens)]
 
-    @field_validator("favorite_recipes", mode="before")
-    def convert_favorite_recipes_to_slugs(cls, v: Any):
-        if not v:
-            return []
-        if not isinstance(v, list):
-            return v
 
-        slugs: list[str] = []
-        for recipe in v:
-            if isinstance(recipe, str):
-                slugs.append(recipe)
-            else:
-                try:
-                    slugs.append(recipe.slug)
-                except AttributeError:
-                    # this isn't a list of recipes, so we quit early and let Pydantic's typical validation handle it
-                    return v
-
-        return slugs
+class UserSummary(MealieModel):
+    id: UUID4
+    group_id: UUID4
+    household_id: UUID4
+    username: str
+    full_name: str
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserPagination(PaginationBase):
     items: list[UserOut]
 
 
-class UserFavorites(UserBase):
-    favorite_recipes: list[RecipeSummary] = []  # type: ignore
-    model_config = ConfigDict(from_attributes=True)
-
-    @classmethod
-    def loader_options(cls) -> list[LoaderOption]:
-        return [
-            joinedload(User.group),
-            selectinload(User.favorite_recipes).joinedload(RecipeModel.recipe_category),
-            selectinload(User.favorite_recipes).joinedload(RecipeModel.tags),
-            selectinload(User.favorite_recipes).joinedload(RecipeModel.tools),
-        ]
+class UserSummaryPagination(PaginationBase):
+    items: list[UserSummary]
 
 
 class PrivateUser(UserOut):
     password: str
-    group_id: UUID4
     login_attemps: int = 0
     locked_at: datetime | None = None
     model_config = ConfigDict(from_attributes=True)
@@ -181,14 +223,14 @@ class PrivateUser(UserOut):
             return False
 
         lockout_expires_at = self.locked_at + timedelta(hours=get_app_settings().SECURITY_USER_LOCKOUT_TIME)
-        return lockout_expires_at > datetime.now()
+        return lockout_expires_at > datetime.now(UTC)
 
     def directory(self) -> Path:
         return PrivateUser.get_directory(self.id)
 
     @classmethod
     def loader_options(cls) -> list[LoaderOption]:
-        return [joinedload(User.group), selectinload(User.favorite_recipes), joinedload(User.tokens)]
+        return [joinedload(User.group), joinedload(User.household), joinedload(User.tokens)]
 
 
 class UpdateGroup(GroupBase):
@@ -200,8 +242,15 @@ class UpdateGroup(GroupBase):
     webhooks: list[CreateWebhook] = []
 
 
+class GroupHouseholdSummary(MealieModel):
+    id: UUID4
+    name: str
+    model_config = ConfigDict(from_attributes=True)
+
+
 class GroupInDB(UpdateGroup):
-    users: list[UserOut] | None = None
+    households: list[GroupHouseholdSummary] | None = None
+    users: list[UserSummary] | None = None
     preferences: ReadGroupPreferences | None = None
     webhooks: list[ReadWebhook] = []
 
@@ -233,9 +282,22 @@ class GroupInDB(UpdateGroup):
             joinedload(Group.categories),
             joinedload(Group.webhooks),
             joinedload(Group.preferences),
+            joinedload(Group.households),
             selectinload(Group.users).joinedload(User.group),
-            selectinload(Group.users).joinedload(User.favorite_recipes),
             selectinload(Group.users).joinedload(User.tokens),
+        ]
+
+
+class GroupSummary(GroupBase):
+    id: UUID4
+    name: str
+    slug: str
+    preferences: ReadGroupPreferences | None = None
+
+    @classmethod
+    def loader_options(cls) -> list[LoaderOption]:
+        return [
+            joinedload(Group.preferences),
         ]
 
 

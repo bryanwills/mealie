@@ -14,7 +14,9 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from sqlalchemy.orm.interfaces import LoaderOption
 
 from mealie.core.config import get_app_dirs
+from mealie.db.models.users.users import User
 from mealie.schema._mealie import MealieModel, SearchType
+from mealie.schema._mealie.mealie_model import UpdatedAtField
 from mealie.schema.response.pagination import PaginationBase
 
 from ...db.models.recipe import (
@@ -57,7 +59,17 @@ class RecipeCategoryPagination(PaginationBase):
 
 class RecipeTool(RecipeTag):
     id: UUID4
-    on_hand: bool = False
+    households_with_tool: list[str] = []
+
+    @field_validator("households_with_tool", mode="before")
+    def convert_households_to_slugs(cls, v):
+        if not v:
+            return []
+
+        try:
+            return [household.slug for household in v]
+        except AttributeError:
+            return v
 
 
 class RecipeToolPagination(PaginationBase):
@@ -83,11 +95,14 @@ class RecipeSummary(MealieModel):
     _normalize_search: ClassVar[bool] = True
 
     user_id: UUID4 = Field(default_factory=uuid4, validate_default=True)
+    household_id: UUID4 = Field(default_factory=uuid4, validate_default=True)
     group_id: UUID4 = Field(default_factory=uuid4, validate_default=True)
 
     name: str | None = None
     slug: Annotated[str, Field(validate_default=True)] = ""
     image: Any | None = None
+    recipe_servings: float = 0
+    recipe_yield_quantity: float = 0
     recipe_yield: str | None = None
 
     total_time: str | None = None
@@ -99,14 +114,14 @@ class RecipeSummary(MealieModel):
     recipe_category: Annotated[list[RecipeCategory] | None, Field(validate_default=True)] | None = []
     tags: Annotated[list[RecipeTag] | None, Field(validate_default=True)] = []
     tools: list[RecipeTool] = []
-    rating: int | None = None
+    rating: float | None = None
     org_url: str | None = Field(None, alias="orgURL")
 
     date_added: datetime.date | None = None
     date_updated: datetime.datetime | None = None
 
     created_at: datetime.datetime | None = None
-    update_at: datetime.datetime | None = None
+    updated_at: datetime.datetime | None = UpdatedAtField(None)
     last_made: datetime.datetime | None = None
     model_config = ConfigDict(from_attributes=True)
 
@@ -118,6 +133,19 @@ class RecipeSummary(MealieModel):
             return str(val)
 
         return val
+
+    @property
+    def recipe_yield_display(self) -> str:
+        return f"{self.recipe_yield_quantity} {self.recipe_yield}".strip()
+
+    @classmethod
+    def loader_options(cls) -> list[LoaderOption]:
+        return [
+            joinedload(RecipeModel.recipe_category),
+            joinedload(RecipeModel.tags),
+            joinedload(RecipeModel.tools),
+            joinedload(RecipeModel.user).load_only(User.household_id),
+        ]
 
 
 class RecipePagination(PaginationBase):
@@ -230,6 +258,12 @@ class Recipe(RecipeSummary):
             return uuid4()
         return group_id
 
+    @field_validator("household_id", mode="before")
+    def validate_household_id(household_id: Any):
+        if isinstance(household_id, int):
+            return uuid4()
+        return household_id
+
     @field_validator("user_id", mode="before")
     def validate_user_id(user_id: Any):
         if isinstance(user_id, int):
@@ -242,6 +276,10 @@ class Recipe(RecipeSummary):
             return v
 
         return {x.key_name: x.value for x in v} if v else {}
+
+    @field_validator("nutrition", mode="before")
+    def validate_nutrition(cls, v):
+        return v or None
 
     @classmethod
     def loader_options(cls) -> list[LoaderOption]:

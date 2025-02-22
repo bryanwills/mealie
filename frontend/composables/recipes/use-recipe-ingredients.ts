@@ -46,14 +46,16 @@ export function useParsedIngredientText(ingredient: RecipeIngredient, disableAmo
   }
 
   const { quantity, food, unit, note } = ingredient;
-  const usePluralUnit = quantity !== undefined && (quantity * scale > 1 || quantity * scale === 0);
+  const usePluralUnit = quantity !== undefined && ((quantity || 0) * scale > 1 || (quantity || 0) * scale === 0);
   const usePluralFood = (!quantity) || quantity * scale > 1
 
   let returnQty = "";
 
   // casting to number is required as sometimes quantity is a string
   if (quantity && Number(quantity) !== 0) {
-    if (unit?.fraction) {
+    if (unit && !unit.fraction) {
+      returnQty = Number((quantity * scale).toPrecision(3)).toString();
+    } else {
       const fraction = frac(quantity * scale, 10, true);
       if (fraction[0] !== undefined && fraction[0] > 0) {
         returnQty += fraction[0];
@@ -61,16 +63,14 @@ export function useParsedIngredientText(ingredient: RecipeIngredient, disableAmo
 
       if (fraction[1] > 0) {
         returnQty += includeFormating ?
-          ` <sup>${fraction[1]}</sup>&frasl;<sub>${fraction[2]}</sub>` :
+          `<sup>${fraction[1]}</sup><span>&frasl;</span><sub>${fraction[2]}</sub>` :
           ` ${fraction[1]}/${fraction[2]}`;
       }
-    } else {
-      returnQty = (quantity * scale).toString();
     }
   }
 
-  const unitName = useUnitName(unit, usePluralUnit);
-  const foodName = useFoodName(food, usePluralFood);
+  const unitName = useUnitName(unit || undefined, usePluralUnit);
+  const foodName = useFoodName(food || undefined, usePluralFood);
 
   return {
     quantity: returnQty ? sanitizeIngredientHTML(returnQty) : undefined,

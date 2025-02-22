@@ -2,21 +2,31 @@ from __future__ import annotations
 
 import random
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from math import ceil
 from typing import Any, Generic, TypeVar
 
 from fastapi import HTTPException
 from pydantic import UUID4, BaseModel
-from sqlalchemy import Select, case, delete, func, nulls_first, nulls_last, select
+from sqlalchemy import ColumnElement, Select, case, delete, func, nulls_first, nulls_last, select
+from sqlalchemy.orm import InstrumentedAttribute
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql import sqltypes
 
 from mealie.core.root_logger import get_logger
 from mealie.db.models._model_base import SqlAlchemyBase
 from mealie.schema._mealie import MealieModel
-from mealie.schema.response.pagination import OrderByNullPosition, OrderDirection, PaginationBase, PaginationQuery
-from mealie.schema.response.query_filter import QueryFilter
+from mealie.schema.response.pagination import (
+    OrderByNullPosition,
+    OrderDirection,
+    PaginationBase,
+    PaginationQuery,
+    RequestQuery,
+)
+from mealie.schema.response.query_filter import QueryFilterBuilder
 from mealie.schema.response.query_search import SearchFilter
+
+from ._utils import NOT_SET, NotSet
 
 Schema = TypeVar("Schema", bound=MealieModel)
 Model = TypeVar("Model", bound=SqlAlchemyBase)
@@ -32,11 +42,18 @@ class RepositoryGeneric(Generic[Schema, Model]):
         Generic ([Model]): Represents the SqlAlchemyModel Model
     """
 
-    user_id: UUID4 | None = None
-    group_id: UUID4 | None = None
     session: Session
 
-    def __init__(self, session: Session, primary_key: str, sql_model: type[Model], schema: type[Schema]) -> None:
+    _group_id: UUID4 | None = None
+    _household_id: UUID4 | None = None
+
+    def __init__(
+        self,
+        session: Session,
+        primary_key: str,
+        sql_model: type[Model],
+        schema: type[Schema],
+    ) -> None:
         self.session = session
         self.primary_key = primary_key
         self.model = sql_model
@@ -44,13 +61,20 @@ class RepositoryGeneric(Generic[Schema, Model]):
 
         self.logger = get_logger()
 
-    def by_user(self: T, user_id: UUID4) -> T:
-        self.user_id = user_id
-        return self
+    @property
+    def group_id(self) -> UUID4 | None:
+        return self._group_id
 
-    def by_group(self: T, group_id: UUID4) -> T:
-        self.group_id = group_id
-        return self
+    @property
+    def household_id(self) -> UUID4 | None:
+        return self._household_id
+
+    @property
+    def column_aliases(self) -> dict[str, ColumnElement]:
+        return {}
+
+    def _random_seed(self) -> str:
+        return str(datetime.now(tz=UTC))
 
     def _log_exception(self, e: Exception) -> None:
         self.logger.error(f"Error processing query for Repo model={self.model.__name__} schema={self.schema.__name__}")
@@ -67,11 +91,10 @@ class RepositoryGeneric(Generic[Schema, Model]):
     def _filter_builder(self, **kwargs) -> dict[str, Any]:
         dct = {}
 
-        if self.user_id:
-            dct["user_id"] = self.user_id
-
         if self.group_id:
             dct["group_id"] = self.group_id
+        if self.household_id:
+            dct["household_id"] = self.household_id
 
         return {**dct, **kwargs}
 
@@ -80,33 +103,18 @@ class RepositoryGeneric(Generic[Schema, Model]):
         limit: int | None = None,
         order_by: str | None = None,
         order_descending: bool = True,
-        start=0,
         override=None,
     ) -> list[Schema]:
-        self.logger.warning('"get_all" method is deprecated; use "page_all" instead')
+        pq = PaginationQuery(
+            per_page=limit or -1,
+            order_by=order_by,
+            order_direction=OrderDirection.desc if order_descending else OrderDirection.asc,
+            page=1,
+        )
 
-        # sourcery skip: remove-unnecessary-cast
-        eff_schema = override or self.schema
+        results = self.page_all(pq, override=override)
 
-        fltr = self._filter_builder()
-
-        q = self._query(override_schema=eff_schema).filter_by(**fltr)
-
-        if order_by:
-            try:
-                order_attr = getattr(self.model, str(order_by))
-                if order_descending:
-                    order_attr = order_attr.desc()
-
-                else:
-                    order_attr = order_attr.asc()
-
-                q = q.order_by(order_attr)
-
-            except AttributeError:
-                self.logger.info(f'Attempted to sort by unknown sort property "{order_by}"; ignoring')
-        result = self.session.execute(q.offset(start).limit(limit)).unique().scalars().all()
-        return [eff_schema.model_validate(x) for x in result]
+        return results.items
 
     def multi_query(
         self,
@@ -302,7 +310,7 @@ class RepositoryGeneric(Generic[Schema, Model]):
         pagination is a method to interact with the filtered database table and return a paginated result
         using the PaginationBase that provides several data points that are needed to manage pagination
         on the client side. This method does utilize the _filter_build method to ensure that the results
-        are filtered by the user and group id when applicable.
+        are filtered by the group id when applicable.
 
         NOTE: When you provide an override you'll need to manually type the result of this method
         as the override, as the type system is not able to infer the result of this method.
@@ -351,14 +359,14 @@ class RepositoryGeneric(Generic[Schema, Model]):
 
         if pagination.query_filter:
             try:
-                query_filter = QueryFilter(pagination.query_filter)
-                query = query_filter.filter_query(query, model=self.model)
+                query_filter_builder = QueryFilterBuilder(pagination.query_filter)
+                query = query_filter_builder.filter_query(query, model=self.model, column_aliases=self.column_aliases)
 
             except ValueError as e:
                 self.logger.error(e)
                 raise HTTPException(status_code=400, detail=str(e)) from e
 
-        count_query = select(func.count()).select_from(query)
+        count_query = select(func.count()).select_from(query.subquery())
         count = self.session.scalar(count_query)
         if not count:
             count = 0
@@ -383,24 +391,52 @@ class RepositoryGeneric(Generic[Schema, Model]):
         query = self.add_order_by_to_query(query, pagination)
         return query.limit(pagination.per_page).offset((pagination.page - 1) * pagination.per_page), count, total_pages
 
-    def add_order_by_to_query(self, query: Select, pagination: PaginationQuery) -> Select:
-        if not pagination.order_by:
+    def add_order_attr_to_query(
+        self,
+        query: Select,
+        order_attr: InstrumentedAttribute,
+        order_dir: OrderDirection,
+        order_by_null: OrderByNullPosition | None,
+    ) -> Select:
+        order_attr = self.column_aliases.get(order_attr.key, order_attr)
+
+        # queries handle uppercase and lowercase differently, which is undesirable
+        if isinstance(order_attr.type, sqltypes.String):
+            order_attr = func.lower(order_attr)
+
+        if order_dir is OrderDirection.asc:
+            order_attr = order_attr.asc()
+        elif order_dir is OrderDirection.desc:
+            order_attr = order_attr.desc()
+
+        if order_by_null is OrderByNullPosition.first:
+            order_attr = nulls_first(order_attr)
+        elif order_by_null is OrderByNullPosition.last:
+            order_attr = nulls_last(order_attr)
+
+        return query.order_by(order_attr)
+
+    def add_order_by_to_query(self, query: Select, request_query: RequestQuery) -> Select:
+        if not request_query.order_by:
             return query
 
-        elif pagination.order_by == "random":
+        elif request_query.order_by == "random":
             # randomize outside of database, since not all db's can set random seeds
             # this solution is db-independent & stable to paging
             temp_query = query.with_only_columns(self.model.id)
             allids = self.session.execute(temp_query).scalars().all()  # fast because id is indexed
+            if not allids:
+                return query
+
             order = list(range(len(allids)))
-            random.seed(pagination.pagination_seed)
+            random.seed(request_query.pagination_seed)
             random.shuffle(order)
             random_dict = dict(zip(allids, order, strict=True))
             case_stmt = case(random_dict, value=self.model.id)
             return query.order_by(case_stmt)
 
         else:
-            for order_by_val in pagination.order_by.split(","):
+            for order_by_val in request_query.order_by.split(","):
                 try:
                     order_by_val = order_by_val.strip()
                     if ":" in order_by_val:
@@ -408,32 +444,20 @@ class RepositoryGeneric(Generic[Schema, Model]):
                         order_dir = OrderDirection(order_dir_val)
                     else:
                         order_by = order_by_val
-                        order_dir = pagination.order_direction
+                        order_dir = request_query.order_direction
 
-                    _, order_attr, query = QueryFilter.get_model_and_model_attr_from_attr_string(
+                    _, order_attr, query = QueryFilterBuilder.get_model_and_model_attr_from_attr_string(
                         order_by, self.model, query=query
                     )
 
-                    if order_dir is OrderDirection.asc:
-                        order_attr = order_attr.asc()
-                    elif order_dir is OrderDirection.desc:
-                        order_attr = order_attr.desc()
-
-                    # queries handle uppercase and lowercase differently, which is undesirable
-                    if isinstance(order_attr.type, sqltypes.String):
-                        order_attr = func.lower(order_attr)
-
-                    if pagination.order_by_null_position is OrderByNullPosition.first:
-                        order_attr = nulls_first(order_attr)
-                    elif pagination.order_by_null_position is OrderByNullPosition.last:
-                        order_attr = nulls_last(order_attr)
-
-                    query = query.order_by(order_attr)
+                    query = self.add_order_attr_to_query(
+                        query, order_attr, order_dir, request_query.order_by_null_position
+                    )
 
                 except ValueError as e:
                     raise HTTPException(
                         status_code=400,
-                        detail=f'Invalid order_by statement "{pagination.order_by}": "{order_by_val}" is invalid',
+                        detail=f'Invalid order_by statement "{request_query.order_by}": "{order_by_val}" is invalid',
                     ) from e
 
             return query
@@ -441,3 +465,40 @@ class RepositoryGeneric(Generic[Schema, Model]):
     def add_search_to_query(self, query: Select, schema: type[Schema], search: str) -> Select:
         search_filter = SearchFilter(self.session, search, schema._normalize_search)
         return search_filter.filter_query_by_search(query, schema, self.model)
+
+
+class GroupRepositoryGeneric(RepositoryGeneric[Schema, Model]):
+    def __init__(
+        self,
+        session: Session,
+        primary_key: str,
+        sql_model: type[Model],
+        schema: type[Schema],
+        *,
+        group_id: UUID4 | None | NotSet,
+    ) -> None:
+        super().__init__(session, primary_key, sql_model, schema)
+        if group_id is NOT_SET:
+            raise ValueError("group_id must be set")
+        self._group_id = group_id if group_id else None
+
+
+class HouseholdRepositoryGeneric(RepositoryGeneric[Schema, Model]):
+    def __init__(
+        self,
+        session: Session,
+        primary_key: str,
+        sql_model: type[Model],
+        schema: type[Schema],
+        *,
+        group_id: UUID4 | None | NotSet,
+        household_id: UUID4 | None | NotSet,
+    ) -> None:
+        super().__init__(session, primary_key, sql_model, schema)
+        if group_id is NOT_SET:
+            raise ValueError("group_id must be set")
+        self._group_id = group_id if group_id else None
+
+        if household_id is NOT_SET:
+            raise ValueError("household_id must be set")
+        self._household_id = household_id if household_id else None

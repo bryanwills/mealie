@@ -123,7 +123,7 @@ export default {
   auth: {
     redirect: {
       login: "/login",
-      logout: "/login?direct=1",
+      logout: "/login",
       callback: "/login",
       home: "/",
     },
@@ -156,16 +156,29 @@ export default {
             propertyName: "access_token",
           },
           refresh: { url: "api/auth/refresh", method: "post" },
+          logout: { url: "api/auth/logout", method: "post" },
           user: { url: "api/users/self", method: "get" },
         },
       },
       oidc: {
-        scheme: "~/schemes/DynamicOpenIDConnectScheme",
+        scheme: "local",
         resetOnError: true,
-        clientId: "",
+        token: {
+          property: "access_token",
+          global: true,
+        },
+        user: {
+          property: "",
+          autoFetch: true,
+        },
         endpoints: {
-          configuration: "",
-        }
+          login: {
+            url: "api/auth/oauth/callback",
+            method: "get",
+          },
+          logout: { url: "api/auth/logout", method: "post" },
+          user: { url: "api/users/self", method: "get" },
+        },
       },
     },
   },
@@ -202,6 +215,7 @@ export default {
       { code: "cs-CZ", file: "cs-CZ.json" },
       { code: "gl-ES", file: "gl-ES.json" },
       { code: "fr-FR", file: "fr-FR.json" },
+      { code: "fr-BE", file: "fr-BE.json" },
       { code: "zh-TW", file: "zh-TW.json" },
       { code: "af-ZA", file: "af-ZA.json" },
       { code: "is-IS", file: "is-IS.json" },
@@ -251,6 +265,7 @@ export default {
         "sr-SP": require("./lang/dateTimeFormats/sr-SP.json"),
         "cs-CZ": require("./lang/dateTimeFormats/cs-CZ.json"),
         "fr-FR": require("./lang/dateTimeFormats/fr-FR.json"),
+        "fr-BE": require("./lang/dateTimeFormats/fr-BE.json"),
         "zh-TW": require("./lang/dateTimeFormats/zh-TW.json"),
         "af-ZA": require("./lang/dateTimeFormats/af-ZA.json"),
         "ru-RU": require("./lang/dateTimeFormats/ru-RU.json"),
@@ -260,6 +275,12 @@ export default {
         "en-GB": require("./lang/dateTimeFormats/en-GB.json"),
         "fi-FI": require("./lang/dateTimeFormats/fi-FI.json"),
         "vi-VN": require("./lang/dateTimeFormats/vi-VN.json"),
+        "sl-SI": require("./lang/dateTimeFormats/sl-SI.json"),
+        "lv-LV": require("./lang/dateTimeFormats/lv-LV.json"),
+        "is-IS": require("./lang/dateTimeFormats/is-IS.json"),
+        "gl-ES": require("./lang/dateTimeFormats/gl-ES.json"),
+        "lt-LT": require("./lang/dateTimeFormats/lt-LT.json"),
+        "hr-HR": require("./lang/dateTimeFormats/hr-HR.json"),
         // END: DATE_LOCALES
       },
       fallbackLocale: "en-US",
@@ -344,13 +365,23 @@ export default {
     },
     manifest: {
       start_url: "/",
+      scope: "/",
       lang: "en",
+      dir: "auto",
       name: "Mealie",
       short_name: "Mealie",
+      crossorigin: "use-credentials",
+      id: "mealie",
       description: "Mealie is a recipe management and meal planning app",
       theme_color: process.env.THEME_LIGHT_PRIMARY || "#E58325",
       background_color: "#FFFFFF",
       display: "standalone",
+      display_override: [
+        "standalone",
+        "minimal-ui",
+        "browser",
+        "window-controls-overlay"
+      ],
       share_target: {
         action: "/r/create/url",
         method: "GET",
@@ -388,20 +419,101 @@ export default {
           purpose: "maskable",
         },
       ],
+      screenshots: [
+        {
+          "src": "/screenshots/home-narrow.png",
+          "sizes": "1600x2420",
+          "form_factor": "narrow",
+          "label": "Home Page"
+        },
+        {
+          "src": "/screenshots/recipe-narrow.png",
+          "sizes": "1600x2420",
+          "form_factor": "narrow",
+          "label": "Recipe Page"
+        },
+        {
+          "src": "/screenshots/editor-narrow.png",
+          "sizes": "1600x2420",
+          "form_factor": "narrow",
+          "label": "Editor Page"
+        },
+        {
+          "src": "/screenshots/parser-narrow.png",
+          "sizes": "1600x2420",
+          "form_factor": "narrow",
+          "label": "Parser Page"
+        },
+        {
+          "src": "/screenshots/home-wide.png",
+          "sizes": "2560x1460",
+          "form_factor": "wide",
+          "label": "Home Page"
+        },
+        {
+          "src": "/screenshots/recipe-wide.png",
+          "sizes": "2560x1460",
+          "form_factor": "wide",
+          "label": "Recipe Page"
+        },
+        {
+          "src": "/screenshots/editor-wide.png",
+          "sizes": "2560x1460",
+          "form_factor": "wide",
+          "label": "Editor Page"
+        },
+        {
+          "src": "/screenshots/parser-wide.png",
+          "sizes": "2560x1460",
+          "form_factor": "wide",
+          "label": "Parser Page"
+        }
+      ],
       "shortcuts": [
         {
           "name": "Shopping Lists",
           "short_name": "Shopping Lists",
           "description": "Open the shopping lists",
           "url": "/shopping-lists",
+          "icons": [
+            {
+              "src": "/icons/mdiFormatListChecks-192x192.png",
+              "sizes": "192x192",
+            },
+            {
+              "src": "/icons/mdiFormatListChecks-96x96.png",
+              "sizes": "96x96",
+            }
+          ]
         },
         {
           "name": "Meal Planner",
           "short_name": "Meal Planner",
           "description": "Open the meal planner",
-          "url": "/group/mealplan/planner/view",
+          "url": "/household/mealplan/planner/view",
+          "icons": [
+            {
+              "src": "/icons/mdiCalendarMultiselect-192x192.png",
+              "sizes": "192x192",
+            },
+            {
+              "src": "/icons/mdiCalendarMultiselect-96x96.png",
+              "sizes": "96x96",
+            }
+          ]
         },
       ],
+      prefer_related_applications: false,
+      handle_links: "preferred",
+      categories: [
+        "food"
+      ],
+      launch_handler: {
+        "client_mode": ["focus-existing", "auto"]
+      },
+      edge_side_panel: {
+        "preferred_width": 400
+      }
     },
     icon: false, // disables the icon module
   },
@@ -420,17 +532,6 @@ export default {
         ["@babel/plugin-proposal-private-property-in-object", { loose: true }],
         // ["@nuxtjs/composition-api/dist/babel-plugin"],
       ],
-    },
-    // audio file support
-    // https://v2.nuxt.com/docs/features/configuration/#extend-webpack-to-load-audio-files
-    extend(config, ctx) {
-      config.module.rules.push({
-        test: /\.(ogg|mp3|wav|mpe?g)$/i,
-        loader: 'file-loader',
-        options: {
-          name: '[path][name].[ext]'
-        }
-      })
     },
     transpile: process.env.NODE_ENV !== "production" ? [/@vue[\\/]composition-api/] : null,
   },

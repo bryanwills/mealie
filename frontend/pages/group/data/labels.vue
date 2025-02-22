@@ -17,6 +17,7 @@
       v-model="state.editDialog"
       :icon="$globals.icons.tags"
       :title="$t('data-pages.labels.edit-label')"
+      :submit-icon="$globals.icons.save"
       :submit-text="$tc('general.save')"
       @submit="editSaveLabel"
     >
@@ -114,6 +115,7 @@
       :headers.sync="tableHeaders"
       :data="labels || []"
       :bulk-actions="[{icon: $globals.icons.delete, text: $tc('general.delete'), event: 'delete-selected'}]"
+      initial-sort="name"
       @delete-one="deleteEventHandler"
       @edit-one="editEventHandler"
       @delete-selected="bulkDeleteEventHandler"
@@ -230,7 +232,7 @@ export default defineComponent({
       editLabel.value = item;
 
       if (!editLabel.value.color) {
-        editLabel.value.color = "#E0E0E0";
+        editLabel.value.color = "#959595";
       }
     }
 
@@ -270,7 +272,7 @@ export default defineComponent({
       state,
       tableConfig,
       tableHeaders,
-      labels: labelStore.labels,
+      labels: labelStore.store,
       validators,
 
       // create

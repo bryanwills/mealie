@@ -7,7 +7,7 @@
         :elevation="hover ? 12 : 2"
         :to="recipeRoute"
         :min-height="imageHeight + 75"
-        @click="$emit('click')"
+        @click.self="$emit('click')"
       >
         <RecipeCardImage
           :icon-size="imageHeight"
@@ -35,11 +35,11 @@
 
         <slot name="actions">
           <v-card-actions v-if="showRecipeContent" class="px-1">
-            <RecipeFavoriteBadge v-if="isOwnGroup" class="absolute" :slug="slug" show-always />
+            <RecipeFavoriteBadge v-if="isOwnGroup" class="absolute" :recipe-id="recipeId" show-always />
 
-            <RecipeRating class="pb-1" :value="rating" :name="name" :slug="slug" :small="true" />
+            <RecipeRating class="pb-1" :value="rating" :recipe-id="recipeId" :slug="slug" :small="true" />
             <v-spacer></v-spacer>
-            <RecipeChips :truncate="true" :items="tags" :title="false" :limit="2" :small="true" url-prefix="tags" />
+            <RecipeChips :truncate="true" :items="tags" :title="false" :limit="2" :small="true" url-prefix="tags" v-on="$listeners" />
 
             <!-- If we're not logged-in, no items display, so we hide this menu -->
             <RecipeContextMenu
@@ -50,7 +50,7 @@
               :recipe-id="recipeId"
               :use-items="{
                 delete: false,
-                edit: true,
+                edit: false,
                 download: true,
                 mealplanner: true,
                 shoppingList: true,
@@ -96,6 +96,10 @@ export default defineComponent({
       type: Number,
       required: false,
       default: 0,
+    },
+    ratingColor: {
+      type: String,
+      default: "secondary",
     },
     image: {
       type: String,

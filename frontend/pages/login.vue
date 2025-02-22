@@ -44,6 +44,7 @@
             filled
             rounded
             autofocus
+            autocomplete="username"
             class="rounded-lg"
             name="login"
             :label="$t('user.email-or-username')"
@@ -56,6 +57,7 @@
             :append-icon="passwordIcon"
             filled
             rounded
+            autocomplete="current-password"
             class="rounded-lg"
             name="password"
             :label="$t('user.password')"
@@ -65,7 +67,7 @@
           <v-checkbox v-model="form.remember" class="ml-2 mt-n2" :label="$t('user.remember-me')"></v-checkbox>
           <v-card-actions class="justify-center pt-0">
             <div class="max-button">
-              <v-btn :loading="loggingIn" color="primary" type="submit" large rounded class="rounded-xl" block>
+              <v-btn :loading="loggingIn" :disabled="oidcLoggingIn" color="primary" type="submit" large rounded class="rounded-xl" block>
                 {{ $t("user.login") }}
               </v-btn>
             </div>
@@ -85,7 +87,7 @@
           </div>
           <v-card-actions v-if="allowOidc" class="justify-center">
           <div class="max-button">
-            <v-btn color="primary" large rounded class="rounded-xl" block @click.native="oidcAuthenticate">
+            <v-btn :loading="oidcLoggingIn" color="primary" large rounded class="rounded-xl" block @click.native="() => oidcAuthenticate()">
                 {{ $t("user.login-oidc") }} {{ oidcProviderName }}
             </v-btn>
           </div>
@@ -133,7 +135,7 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, useContext, computed, reactive, useRouter, useAsync } from "@nuxtjs/composition-api";
+import { defineComponent, ref, useContext, computed, reactive, useRouter, useAsync, onBeforeMount } from "@nuxtjs/composition-api";
 import { useDark, whenever } from "@vueuse/core";
 import { useLoggedInState } from "~/composables/use-logged-in-state";
 import { useAppInfo } from "~/composables/api";
@@ -180,6 +182,7 @@ export default defineComponent({
     );
 
     const loggingIn = ref(false);
+    const oidcLoggingIn = ref(false)
 
     const appInfo = useAppInfo();
 
@@ -191,24 +194,39 @@ export default defineComponent({
     const oidcProviderName = computed(() => appInfo.value?.oidcProviderName || "OAuth")
 
     whenever(
-        () => allowOidc.value && oidcRedirect.value && !isCallback() && !isDirectLogin(),
+        () => allowOidc.value && oidcRedirect.value && !isCallback() && !isDirectLogin() && !$auth.check().valid,
         () => oidcAuthenticate(),
         {immediate: true}
     )
 
+    onBeforeMount(async () => {
+        if (isCallback()) {
+            await oidcAuthenticate(true)
+        }
+    })
+
     function isCallback() {
-        return router.currentRoute.query.state;
+        const params = new URLSearchParams(window.location.search)
+        return params.has("code") || params.has("error")
     }
 
     function isDirectLogin() {
-        return router.currentRoute.query.direct
+        const params = new URLSearchParams(window.location.search)
+        return params.has("direct") && params.get("direct") === "1"
     }
 
-    async function oidcAuthenticate() {
-        try {
-            await $auth.loginWith("oidc")
-        } catch (error) {
-            alert.error(i18n.t("events.something-went-wrong") as string);
+    async function oidcAuthenticate(callback = false) {
+        if (callback) {
+            oidcLoggingIn.value = true
+            try {
+                await $auth.loginWith("oidc", { params: new URLSearchParams(window.location.search)})
+            } catch (error) {
+                await router.replace("/login?direct=1")
+                alertOnError(error)
+            }
+            oidcLoggingIn.value = false
+        } else {
+            window.location.replace("/api/auth/oauth") // start the redirect process
         }
     }
 
@@ -227,6 +245,12 @@ export default defineComponent({
       try {
         await $auth.loginWith("local", { data: formData });
       } catch (error) {
+        alertOnError(error)
+      }
+      loggingIn.value = false;
+    }
+
+    function alertOnError(error: any) {
         // TODO Check if error is an AxiosError, but isAxiosError is not working right now
         // See https://github.com/nuxt-community/axios-module/issues/550
         // Import $axios from useContext()
@@ -240,8 +264,6 @@ export default defineComponent({
         } else {
           alert.error(i18n.t("events.something-went-wrong") as string);
         }
-      }
-      loggingIn.value = false;
     }
 
     return {
@@ -253,6 +275,7 @@ export default defineComponent({
       authenticate,
       oidcAuthenticate,
       oidcProviderName,
+      oidcLoggingIn,
       passwordIcon,
       inputType,
       togglePasswordShow,

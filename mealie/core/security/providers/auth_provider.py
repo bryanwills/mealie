@@ -1,8 +1,8 @@
 import abc
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Generic, TypeVar
 
-from jose import jwt
+import jwt
 from sqlalchemy.orm.session import Session
 
 from mealie.core.config import get_app_settings
@@ -45,18 +45,21 @@ class AuthProvider(Generic[T], metaclass=abc.ABCMeta):
         to_encode = data.copy()
         expires_delta = expires_delta or timedelta(hours=settings.TOKEN_TIME)
 
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = datetime.now(UTC) + expires_delta
 
         to_encode["exp"] = expire
         to_encode["iss"] = ISS
-        return (jwt.encode(to_encode, settings.SECRET, algorithm=ALGORITHM), expires_delta)
+        return (
+            jwt.encode(to_encode, settings.SECRET, algorithm=ALGORITHM),
+            expires_delta,
+        )
 
     def try_get_user(self, username: str) -> PrivateUser | None:
         """Try to get a user from the database, first trying username, then trying email"""
         if self.__has_tried_user:
             return self.user
 
-        db = get_repositories(self.session)
+        db = get_repositories(self.session, group_id=None, household_id=None)
 
         user = user = db.users.get_one(username, "username", any_case=True)
         if not user:
@@ -66,6 +69,6 @@ class AuthProvider(Generic[T], metaclass=abc.ABCMeta):
         return user
 
     @abc.abstractmethod
-    async def authenticate(self) -> tuple[str, timedelta] | None:
+    def authenticate(self) -> tuple[str, timedelta] | None:
         """Attempt to authenticate a user"""
         raise NotImplementedError

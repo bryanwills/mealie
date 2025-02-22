@@ -39,6 +39,6 @@ class PrivatePasswordResetToken(SavePasswordResetToken):
     def loader_options(cls) -> list[LoaderOption]:
         return [
             selectinload(PasswordResetModel.user).joinedload(User.group),
-            selectinload(PasswordResetModel.user).joinedload(User.favorite_recipes),
+            selectinload(PasswordResetModel.user).joinedload(User.household),
             selectinload(PasswordResetModel.user).joinedload(User.tokens),
         ]

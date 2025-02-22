@@ -60,7 +60,7 @@
           <i18n path="settings.backup.experimental-description" />
           </v-card-text>
         </BaseCardSectionTitle>
-        <v-toolbar color="background" flat class="justify-between">
+        <v-toolbar color="transparent" flat class="justify-between">
         <BaseButton class="mr-2" @click="createBackup"> {{ $t("settings.backup.create-heading") }} </BaseButton>
         <AppButtonUpload
                 :text-btn="false"
@@ -162,6 +162,8 @@ export default defineComponent({
       if (error) {
         console.log(error);
         state.importDialog = false;
+        state.runningRestore = false;
+        alert.error(i18n.tc("settings.backup.restore-fail"));
       } else {
         alert.success(i18n.tc("settings.backup.restore-success"));
         $auth.logout();

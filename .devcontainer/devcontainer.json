@@ -9,7 +9,7 @@
       // Update 'VARIANT' to pick a Python version: 3, 3.10, 3.9, 3.8, 3.7, 3.6
       // Append -bullseye or -buster to pin to an OS version.
       // Use -bullseye variants on local on arm64/Apple Silicon.
-      "VARIANT": "3.10-bullseye",
+      "VARIANT": "3.12-bullseye",
       // Options
       "NODE_VERSION": "16"
     }
@@ -25,12 +25,13 @@
         "python.formatting.autopep8Path": "/usr/local/py-utils/bin/autopep8",
         "python.formatting.blackPath": "/usr/local/py-utils/bin/black",
         "python.formatting.yapfPath": "/usr/local/py-utils/bin/yapf",
+        "mypy.runUsingActiveInterpreter": true
       },
       "extensions": [
+        "charliermarsh.ruff",
         "dbaeumer.vscode-eslint",
         "matangover.mypy",
         "ms-python.black-formatter",
-        "ms-python.isort",
         "ms-python.pylint",
         "ms-python.python",
         "ms-python.vscode-pylance",
@@ -42,6 +43,7 @@
   "forwardPorts": [
     3000,
     9000,
+    9091, // used by docker production
     24678 // used by nuxt when hot-reloading using polling
   ],
   // Use 'onCreateCommand' to run commands at the end of container creation.

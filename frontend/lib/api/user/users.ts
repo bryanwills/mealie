@@ -1,23 +1,30 @@
 import { BaseCRUDAPI } from "../base/base-clients";
-import { RequestResponse } from "../types/non-generated";
 import {
   ChangePassword,
   DeleteTokenResponse,
-  GroupInDB,
   LongLiveTokenIn,
   LongLiveTokenOut,
   ResetPassword,
   UserBase,
-  UserFavorites,
   UserIn,
   UserOut,
+  UserRatingOut,
+  UserRatingSummary,
 } from "~/lib/api/types/user";
+
+export interface UserRatingsSummaries {
+  ratings: UserRatingSummary[];
+}
+
+export interface UserRatingsOut {
+  ratings: UserRatingOut[];
+}
 
 const prefix = "/api";
 
 const routes = {
   usersSelf: `${prefix}/users/self`,
-  groupsSelf: `${prefix}/users/self/group`,
+  ratingsSelf: `${prefix}/users/self/ratings`,
   passwordReset: `${prefix}/users/reset-password`,
   passwordChange: `${prefix}/users/password`,
   users: `${prefix}/users`,
@@ -27,6 +34,10 @@ const routes = {
   usersId: (id: string) => `${prefix}/users/${id}`,
   usersIdFavorites: (id: string) => `${prefix}/users/${id}/favorites`,
   usersIdFavoritesSlug: (id: string, slug: string) => `${prefix}/users/${id}/favorites/${slug}`,
+  usersIdRatings: (id: string) => `${prefix}/users/${id}/ratings`,
+  usersIdRatingsSlug: (id: string, slug: string) => `${prefix}/users/${id}/ratings/${slug}`,
+  usersSelfFavoritesId: (id: string) => `${prefix}/users/self/favorites/${id}`,
+  usersSelfRatingsId: (id: string) => `${prefix}/users/self/ratings/${id}`,
 
   usersApiTokens: `${prefix}/users/api-tokens`,
   usersApiTokensTokenId: (token_id: string | number) => `${prefix}/users/api-tokens/${token_id}`,
@@ -35,10 +46,6 @@ const routes = {
 export class UserApi extends BaseCRUDAPI<UserIn, UserOut, UserBase> {
   baseRoute: string = routes.users;
   itemRoute = (itemid: string) => routes.usersId(itemid);
-
-  async getSelfGroup(): Promise<RequestResponse<GroupInDB>> {
-    return await this.requests.get(routes.groupsSelf, {});
-  }
 
   async addFavorite(id: string, slug: string) {
     return await this.requests.post(routes.usersIdFavoritesSlug(id, slug), {});
@@ -49,7 +56,23 @@ export class UserApi extends BaseCRUDAPI<UserIn, UserOut, UserBase> {
   }
 
   async getFavorites(id: string) {
-    return await this.requests.get<UserFavorites>(routes.usersIdFavorites(id));
+    return await this.requests.get<UserRatingsOut>(routes.usersIdFavorites(id));
+  }
+
+  async getSelfFavorites() {
+    return await this.requests.get<UserRatingsSummaries>(routes.ratingsSelf);
+  }
+
+  async getRatings(id: string) {
+    return await this.requests.get<UserRatingsOut>(routes.usersIdRatings(id));
+  }
+
+  async setRating(id: string, slug: string, rating: number | null, isFavorite: boolean | null) {
+    return await this.requests.post(routes.usersIdRatingsSlug(id, slug), { rating, isFavorite });
+  }
+
+  async getSelfRatings() {
+    return await this.requests.get<UserRatingsSummaries>(routes.ratingsSelf);
   }
 
   async changePassword(changePassword: ChangePassword) {

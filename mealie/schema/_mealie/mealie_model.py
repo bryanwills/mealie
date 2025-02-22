@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from enum import Enum
-from typing import ClassVar, Protocol, TypeVar
+from typing import ClassVar, Protocol, Self, TypeVar
 
 from humps.main import camelize
-from pydantic import UUID4, BaseModel, ConfigDict
+from pydantic import UUID4, AliasChoices, BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import Select, desc, func, or_, text
 from sqlalchemy.orm import InstrumentedAttribute, Session
 from sqlalchemy.orm.interfaces import LoaderOption
@@ -13,6 +15,28 @@ from sqlalchemy.orm.interfaces import LoaderOption
 from mealie.db.models._model_base import SqlAlchemyBase
 
 T = TypeVar("T", bound=BaseModel)
+
+HOUR_ONLY_TZ_PATTERN = re.compile(r"[+-]\d{2}$")
+
+
+def UpdatedAtField(*args, **kwargs):
+    """
+    Wrapper for Pydantic's Field, which sets default values for our update_at aliases
+
+    Since the database stores this value as update_at, we want to accept this as a possible value
+    """
+
+    kwargs.pop("alias", None)
+    kwargs.pop("alias_generator", None)
+
+    # ensure the alias is not overwritten by the generator, if there is one
+    # https://docs.pydantic.dev/latest/concepts/alias/#alias-priority
+    kwargs["alias_priority"] = 2
+
+    kwargs["validation_alias"] = AliasChoices("update_at", "updateAt", "updated_at", "updatedAt")
+    kwargs["serialization_alias"] = "updatedAt"
+
+    return Field(*args, **kwargs)
 
 
 class SearchType(Enum):
@@ -30,12 +54,49 @@ class MealieModel(BaseModel):
     """
     model_config = ConfigDict(alias_generator=camelize, populate_by_name=True)
 
+    @model_validator(mode="before")
+    @classmethod
+    def fix_hour_only_tz(cls, data: T) -> T:
+        """
+        Fixes datetimes with timezones that only have the hour portion.
+
+        Pydantic assumes timezones are in the format +HH:MM, but postgres returns +HH.
+        https://github.com/pydantic/pydantic/issues/8609
+        """
+        for field, field_info in cls.model_fields.items():
+            if field_info.annotation != datetime:
+                continue
+            try:
+                if not isinstance(val := getattr(data, field), str):
+                    continue
+            except AttributeError:
+                continue
+            if re.search(HOUR_ONLY_TZ_PATTERN, val):
+                setattr(data, field, val + ":00")
+
+        return data
+
+    @model_validator(mode="after")
+    def set_tz_info(self) -> Self:
+        """
+        Adds UTC timezone information to all datetimes in the model.
+        The server stores everything in UTC without timezone info.
+        """
+        for field in self.model_fields:
+            val = getattr(self, field)
+            if not isinstance(val, datetime):
+                continue
+            if not val.tzinfo:
+                setattr(self, field, val.replace(tzinfo=UTC))
+
+        return self
+
     def cast(self, cls: type[T], **kwargs) -> T:
         """
         Cast the current model to another with additional arguments. Useful for
         transforming DTOs into models that are saved to a database
         """
-        create_data = {field: getattr(self, field) for field in self.__fields__ if field in cls.__fields__}
+        create_data = {field: getattr(self, field) for field in self.model_fields if field in cls.model_fields}
         create_data.update(kwargs or {})
         return cls(**create_data)
 

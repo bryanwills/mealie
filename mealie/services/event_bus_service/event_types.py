@@ -1,9 +1,9 @@
 import uuid
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from enum import Enum, auto
 from typing import Any
 
-from pydantic import UUID4, field_validator
+from pydantic import UUID4, SerializeAsAny, field_validator
 
 from ...schema._mealie.mealie_model import MealieModel
 
@@ -138,6 +138,11 @@ class EventRecipeData(EventDocumentDataBase):
     recipe_slug: str
 
 
+class EventRecipeBulkData(EventDocumentDataBase):
+    document_type: EventDocumentType = EventDocumentType.recipe
+    recipe_slugs: list[str]
+
+
 class EventRecipeBulkReportData(EventDocumentDataBase):
     document_type: EventDocumentType = EventDocumentType.recipe_bulk_report
     report_id: UUID4
@@ -179,7 +184,7 @@ class Event(MealieModel):
     message: EventBusMessage
     event_type: EventTypes
     integration_id: str
-    document_data: EventDocumentDataBase
+    document_data: SerializeAsAny[EventDocumentDataBase]
 
     # set at instantiation
     event_id: UUID4 | None = None
@@ -188,4 +193,4 @@ class Event(MealieModel):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.event_id = uuid.uuid4()
-        self.timestamp = datetime.now()
+        self.timestamp = datetime.now(UTC)

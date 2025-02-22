@@ -7,11 +7,12 @@ from typing import ClassVar
 from uuid import UUID, uuid4
 
 from pydantic import UUID4, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy.orm.interfaces import LoaderOption
 
 from mealie.db.models.recipe import IngredientFoodModel
 from mealie.schema._mealie import MealieModel
+from mealie.schema._mealie.mealie_model import UpdatedAtField
 from mealie.schema._mealie.types import NoneFloat
 from mealie.schema.response.pagination import PaginationBase
 
@@ -65,6 +66,7 @@ class IngredientFoodAlias(CreateIngredientFoodAlias):
 class CreateIngredientFood(UnitFoodBase):
     label_id: UUID4 | None = None
     aliases: list[CreateIngredientFoodAlias] = []
+    households_with_ingredient_food: list[str] = []
 
 
 class SaveIngredientFood(CreateIngredientFood):
@@ -77,15 +79,35 @@ class IngredientFood(CreateIngredientFood):
     aliases: list[IngredientFoodAlias] = []
 
     created_at: datetime.datetime | None = None
-    update_at: datetime.datetime | None = None
+    updated_at: datetime.datetime | None = UpdatedAtField(None)
 
-    _searchable_properties: ClassVar[list[str]] = ["name_normalized", "plural_name_normalized"]
+    _searchable_properties: ClassVar[list[str]] = [
+        "name_normalized",
+        "plural_name_normalized",
+    ]
     _normalize_search: ClassVar[bool] = True
     model_config = ConfigDict(from_attributes=True)
 
     @classmethod
     def loader_options(cls) -> list[LoaderOption]:
-        return [joinedload(IngredientFoodModel.extras), joinedload(IngredientFoodModel.label)]
+        return [
+            selectinload(IngredientFoodModel.households_with_ingredient_food),
+            joinedload(IngredientFoodModel.extras),
+            joinedload(IngredientFoodModel.label),
+        ]
+
+    @field_validator("households_with_ingredient_food", mode="before")
+    def convert_households_to_slugs(cls, v):
+        if not v:
+            return []
+
+        try:
+            return [household.slug for household in v]
+        except AttributeError:
+            return v
+
+    def is_on_hand(self, household_slug: str) -> bool:
+        return household_slug in self.households_with_tool
 
 
 class IngredientFoodPagination(PaginationBase):
@@ -117,7 +139,7 @@ class IngredientUnit(CreateIngredientUnit):
     aliases: list[IngredientUnitAlias] = []
 
     created_at: datetime.datetime | None = None
-    update_at: datetime.datetime | None = None
+    updated_at: datetime.datetime | None = UpdatedAtField(None)
 
     _searchable_properties: ClassVar[list[str]] = [
         "name_normalized",
@@ -187,7 +209,7 @@ class RecipeIngredientBase(MealieModel):
         qty: float | Fraction
 
         # decimal
-        if not self.unit or not self.unit.fraction:
+        if self.unit and not self.unit.fraction:
             qty = round(self.quantity or 0, INGREDIENT_QTY_PRECISION)
             if qty.is_integer():
                 return str(int(qty))
@@ -327,6 +349,7 @@ class ParsedIngredient(MealieModel):
 class RegisteredParser(str, enum.Enum):
     nlp = "nlp"
     brute = "brute"
+    openai = "openai"
 
 
 class IngredientsRequest(MealieModel):

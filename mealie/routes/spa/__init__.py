@@ -104,15 +104,7 @@ def content_with_meta(group_slug: str, recipe: Recipe) -> str:
 
             ingredients.append(s)
 
-    nutrition: dict[str, str | None] = {}
-    if recipe.nutrition:
-        nutrition["calories"] = recipe.nutrition.calories
-        nutrition["fatContent"] = recipe.nutrition.fat_content
-        nutrition["fiberContent"] = recipe.nutrition.fiber_content
-        nutrition["proteinContent"] = recipe.nutrition.protein_content
-        nutrition["carbohydrateContent"] = recipe.nutrition.carbohydrate_content
-        nutrition["sodiumContent"] = recipe.nutrition.sodium_content
-        nutrition["sugarContent"] = recipe.nutrition.sugar_content
+    nutrition: dict[str, str | None] = recipe.nutrition.model_dump(by_alias=True) if recipe.nutrition else {}
 
     as_schema_org = {
         "@context": "https://schema.org",
@@ -124,7 +116,7 @@ def content_with_meta(group_slug: str, recipe: Recipe) -> str:
         "prepTime": recipe.prep_time,
         "cookTime": recipe.cook_time,
         "totalTime": recipe.total_time,
-        "recipeYield": recipe.recipe_yield,
+        "recipeYield": recipe.recipe_yield_display,
         "recipeIngredient": ingredients,
         "recipeInstructions": [i.text for i in recipe.recipe_instructions] if recipe.recipe_instructions else [],
         "recipeCategory": [c.name for c in recipe.recipe_category] if recipe.recipe_category else [],
@@ -145,9 +137,11 @@ def content_with_meta(group_slug: str, recipe: Recipe) -> str:
     ]
 
     global __contents
-    __contents = inject_recipe_json(__contents, as_schema_org)
-    __contents = inject_meta(__contents, meta_tags)
-    return __contents
+    contents = __contents  # make a local copy so we don't modify the global contents
+    contents = inject_recipe_json(contents, as_schema_org)
+    contents = inject_meta(contents, meta_tags)
+
+    return contents
 
 
 def response_404():
@@ -160,15 +154,16 @@ def serve_recipe_with_meta_public(
     session: Session = Depends(generate_session),
 ):
     try:
-        repos = AllRepositories(session)
-        group = repos.groups.get_by_slug_or_id(group_slug)
+        public_repos = AllRepositories(session)
+        group = public_repos.groups.get_by_slug_or_id(group_slug)
 
-        if not group or group.preferences.private_group:  # type: ignore
+        if not (group and group.preferences) or group.preferences.private_group:
             return response_404()
 
-        recipe = repos.recipes.by_group(group.id).get_one(recipe_slug)
+        group_repos = AllRepositories(session, group_id=group.id, household_id=None)
+        recipe = group_repos.recipes.get_one(recipe_slug)
 
-        if not recipe or not recipe.settings.public:  # type: ignore
+        if not (recipe and recipe.settings) or not recipe.settings.public:
             return response_404()
 
         # Inject meta tags
@@ -187,9 +182,9 @@ async def serve_recipe_with_meta(
         return serve_recipe_with_meta_public(group_slug, recipe_slug, session)
 
     try:
-        repos = AllRepositories(session)
+        group_repos = AllRepositories(session, group_id=user.group_id, household_id=None)
 
-        recipe = repos.recipes.by_group(user.group_id).get_one(recipe_slug, "slug")
+        recipe = group_repos.recipes.get_one(recipe_slug, "slug")
         if recipe is None:
             return response_404()
 
@@ -201,8 +196,8 @@ async def serve_recipe_with_meta(
 
 async def serve_shared_recipe_with_meta(group_slug: str, token_id: str, session: Session = Depends(generate_session)):
     try:
-        repos = AllRepositories(session)
-        token_summary = repos.recipe_share_tokens.get_one(token_id)
+        public_repos = AllRepositories(session, group_id=None)
+        token_summary = public_repos.recipe_share_tokens.get_one(token_id)
         if token_summary is None:
             raise Exception("Token Not Found")
 
@@ -219,6 +214,6 @@ def mount_spa(app: FastAPI):
     global __contents
     __contents = pathlib.Path(__app_settings.STATIC_FILES).joinpath("index.html").read_text()
 
-    app.get("/g/{group_slug}/r/{recipe_slug}")(serve_recipe_with_meta)
-    app.get("/g/{group_slug}/shared/r/{token_id}")(serve_shared_recipe_with_meta)
+    app.get("/g/{group_slug}/r/{recipe_slug}", include_in_schema=False)(serve_recipe_with_meta)
+    app.get("/g/{group_slug}/shared/r/{token_id}", include_in_schema=False)(serve_shared_recipe_with_meta)
     app.mount("/", SPAStaticFiles(directory=__app_settings.STATIC_FILES, html=True), name="spa")

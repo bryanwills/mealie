@@ -81,6 +81,7 @@
       :headers.sync="tableHeaders"
       :data="categories || []"
       :bulk-actions="[{icon: $globals.icons.delete, text: $tc('general.delete'), event: 'delete-selected'}]"
+      initial-sort="name"
       @delete-one="deleteEventHandler"
       @edit-one="editEventHandler"
       @delete-selected="bulkDeleteEventHandler"
@@ -96,7 +97,7 @@
 import { defineComponent, reactive, ref, useContext } from "@nuxtjs/composition-api";
 import { validators } from "~/composables/use-validators";
 import { useCategoryStore, useCategoryData } from "~/composables/store";
-import { RecipeCategory } from "~/lib/api/types/admin";
+import { RecipeCategory } from "~/lib/api/types/recipe";
 
 export default defineComponent({
   setup() {
@@ -198,7 +199,7 @@ export default defineComponent({
       state,
       tableConfig,
       tableHeaders,
-      categories: categoryStore.items,
+      categories: categoryStore.store,
       validators,
 
       // create

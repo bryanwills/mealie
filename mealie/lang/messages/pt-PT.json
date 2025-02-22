@@ -3,7 +3,20 @@
         "server-error": "Ocorreu um erro inesperado"
     },
     "recipe": {
-        "unique-name-error": "Os nomes de receitas devem ser únicos"
+        "unique-name-error": "Os nomes de receitas devem ser únicos",
+        "recipe-created": "Receita criada",
+        "recipe-defaults": {
+            "ingredient-note": "1 Chávena de Farinha",
+            "step-text": "Os passos da receita, bem como outros campos na página da receita, suportam a sintaxe markdown.\n\n**Adicionar um link**\n\n[Meu link](https://demo.mealie.io)\n"
+        },
+        "servings-text": {
+            "makes": "Faz",
+            "serves": "Serve",
+            "serving": "Porção",
+            "servings": "Porções",
+            "yield": "Rendimento",
+            "yields": "Rendimentos"
+        }
     },
     "mealplan": {
         "no-recipes-match-your-rules": "Nenhuma receita coincide com as suas regras"
@@ -40,5 +53,28 @@
         "second": "segundo|segundos",
         "millisecond": "milissegundo|milissegundos",
         "microsecond": "microssegundo|microssegundos"
+    },
+    "emails": {
+        "password": {
+            "subject": "Mealie Esqueceu-se da Palavra-passe",
+            "header_text": "Esqueci-me da Palavra-passe",
+            "message_top": "Solicitou a reposição da sua palavra-passe.",
+            "message_bottom": "Clique no botão acima para redefinir a sua palavra-passe.",
+            "button_text": "Repor Palavra-passe"
+        },
+        "invitation": {
+            "subject": "Convite para aderir ao Melie",
+            "header_text": "Está convidado!",
+            "message_top": "Foi convidado para aderir ao Mealie.",
+            "message_bottom": "Clique no botão acima para aceitar o convite.",
+            "button_text": "Aceitar Convite"
+        },
+        "test": {
+            "subject": "Email de testes do Mealie",
+            "header_text": "Email de Teste",
+            "message_top": "Este é um email de teste.",
+            "message_bottom": "Clique no botão acima para testar o email.",
+            "button_text": "Abrir o Mealie"
+        }
     }
 }

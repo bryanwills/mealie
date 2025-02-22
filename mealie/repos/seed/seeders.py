@@ -14,7 +14,7 @@ from .resources import foods, labels, units
 class MultiPurposeLabelSeeder(AbstractSeeder):
     @cached_property
     def service(self):
-        return MultiPurposeLabelService(self.repos, self.group_id)
+        return MultiPurposeLabelService(self.repos)
 
     def get_file(self, locale: str | None = None) -> pathlib.Path:
         locale_path = self.resources / "labels" / "locales" / f"{locale}.json"
@@ -31,7 +31,7 @@ class MultiPurposeLabelSeeder(AbstractSeeder):
             seen_label_names.add(label["name"])
             yield MultiPurposeLabelSave(
                 name=label["name"],
-                group_id=self.group_id,
+                group_id=self.repos.group_id,
             )
 
     def seed(self, locale: str | None = None) -> None:
@@ -58,10 +58,12 @@ class IngredientUnitsSeeder(AbstractSeeder):
 
             seen_unit_names.add(unit["name"])
             yield SaveIngredientUnit(
-                group_id=self.group_id,
+                group_id=self.repos.group_id,
                 name=unit["name"],
+                plural_name=unit.get("plural_name"),
                 description=unit["description"],
                 abbreviation=unit["abbreviation"],
+                plural_abbreviation=unit.get("plural_abbreviation"),
             )
 
     def seed(self, locale: str | None = None) -> None:
@@ -81,11 +83,16 @@ class IngredientFoodsSeeder(AbstractSeeder):
     def load_data(self, locale: str | None = None) -> Generator[SaveIngredientFood, None, None]:
         file = self.get_file(locale)
 
-        seed_foods: dict[str, str] = json.loads(file.read_text(encoding="utf-8"))
-        for food in set(seed_foods.values()):
+        seed_foods_names = set()
+        for food in json.loads(file.read_text(encoding="utf-8")).values():
+            if food["name"] in seed_foods_names:
+                continue
+
+            seed_foods_names.add(food["name"])
             yield SaveIngredientFood(
-                group_id=self.group_id,
-                name=food,
+                group_id=self.repos.group_id,
+                name=food["name"],
+                plural_name=food.get("plural_name"),
                 description="",
             )
 
